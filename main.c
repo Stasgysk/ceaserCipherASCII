@@ -1,6 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 void printError();
 int ifEmpty(char string[]);
@@ -46,6 +49,10 @@ int main(int argc, char *argv[]) {
                 printError();
                 return 0;
             }
+            if(strcmp(argv[i+1], "-p") == 0 || strcmp(argv[i+1], "-i") == 0 || strcmp(argv[i+1], "-o") == 0) {
+                printError();
+                return 0;
+            }
             strcpy(key, argv[i+1]);
             i++;
         }
@@ -58,6 +65,10 @@ int main(int argc, char *argv[]) {
                 printError();
                 return 0;
             }
+            if(strcmp(argv[i+1], "-p") == 0 || strcmp(argv[i+1], "-i") == 0 || strcmp(argv[i+1], "-o") == 0) {
+                printError();
+                return 0;
+            }
             strcpy(inputFile, argv[i+1]);
             i++;
         }
@@ -67,6 +78,10 @@ int main(int argc, char *argv[]) {
                 return 0;
             }
             if(strlen(outputFile) != 0) {
+                printError();
+                return 0;
+            }
+            if(strcmp(argv[i+1], "-p") == 0 || strcmp(argv[i+1], "-i") == 0 || strcmp(argv[i+1], "-o") == 0) {
                 printError();
                 return 0;
             }
@@ -122,42 +137,42 @@ int getKeyIntValue(char key[]) {
     for (int i = 0; i < strlen(key); i++) {
         result += key[i];
     }
-    result = result % 94;
+    result = result % 255;
     return result;
 }
 
+long getFileSize(char fileName[]) {
+    int file = -1;
+    file = open(fileName, O_RDONLY);
+    struct stat file_status;
+    if (stat(fileName, &file_status) < 0) {
+        return -1;
+    }
+    close(file);
+    return file_status.st_size;
+}
+
 char* getInputString(char inputFileName[]){
-    FILE *fptr;
+    int file = -1;
 
-    fptr = fopen(inputFileName, "r");
-
-    if(fptr == NULL) {
+    long size = getFileSize(inputFileName);
+    if(size < 0) {
         return NULL;
     }
 
-    fseek (fptr, 0, SEEK_END);
-    long length = ftell (fptr);
-    char* fileContent = malloc(length + 1);
-    fseek (fptr, 0, SEEK_SET);
+    file = open(inputFileName, O_RDONLY);
 
-    char ch;
-    int pos = 0;
-    do {
-        ch = fgetc(fptr);
-        if(ch != EOF){
-            fileContent[pos] = ch;
-            pos++;
-        }
-    } while (ch != EOF);
-
-    fgets(fileContent, length, fptr);
-
-    fclose(fptr);
+    if(file == -1){
+        return NULL;
+    }
     
-    return fileContent;
+    char* fileContentToReturn = malloc(size + 1);
+    read(file, fileContentToReturn, size);
+    close(file);
+    return fileContentToReturn;
 }
 
-int writeToOutputFile(char* outputFileContent, char outputFileName[]){
+int writeToOutputFile(char* outputFileContent, char outputFileName[], int length){
     FILE *fptr;
 
     fptr = fopen(outputFileName, "w");
@@ -166,7 +181,9 @@ int writeToOutputFile(char* outputFileContent, char outputFileName[]){
         return -1;
     }
 
-    fprintf(fptr, "%s", outputFileContent);
+    for (int i = 0; i < length; i++){
+        fprintf(fptr, "%c", outputFileContent[i]);
+    }
 
     fclose(fptr);
     return 0;
@@ -175,64 +192,50 @@ int writeToOutputFile(char* outputFileContent, char outputFileName[]){
 void encrypt(char key[], char inputFileName[], char outputFileName[]) {
     int keyValue = getKeyIntValue(key);
 
-    printf("%d\n", keyValue);
+    if(keyValue < 0){
+        return;
+    }
 
     char* inputFileContent = getInputString(inputFileName);
     if(inputFileContent == NULL) {
         printError();
         return;
     }
-
-    char* outputFileContent = malloc(strlen(inputFileContent) + 1);
-
-    for (int i = 0; i < strlen(inputFileContent); i++) {
-        int integerValue = inputFileContent[i];
-        if(integerValue == 10) {
-            outputFileContent[i] = '\n';
-            continue;
+    
+    long size = getFileSize(inputFileName);
+    for (int i = 0; i < size; i++) {
+        inputFileContent[i] += keyValue;
+        if(inputFileContent[i] > 255) {
+            inputFileContent[i] = (inputFileContent[i] - 256);
         }
-        if(integerValue == 13) {
-            outputFileContent[i] = 13;
-            continue;
-        }
-        integerValue += keyValue;
-        if(integerValue > 126) {
-            integerValue = (integerValue - 126) + 32;
-        }
-        outputFileContent[i] = integerValue;
     }
 
-    writeToOutputFile(outputFileContent, outputFileName);
+    writeToOutputFile(inputFileContent, outputFileName, size);
+    free(inputFileContent);
 }
 
 void decrypt(char key[], char inputFileName[], char outputFileName[]) {
     int keyValue = getKeyIntValue(key);
 
+    if(keyValue < 0){
+        return;
+    }
+
     char* inputFileContent = getInputString(inputFileName);
     if(inputFileContent == NULL) {
         printError();
         return;
     }
-
-    char* outputFileContent = malloc(strlen(inputFileContent) + 1);
-
-    for (int i = 0; i < strlen(inputFileContent); i++) {
-        int integerValue = inputFileContent[i];
-        if(integerValue == 10) {
-            outputFileContent[i] = '\n';
-            continue;
+    
+    long size = getFileSize(inputFileName);
+    for (int i = 0; i < size; i++) {
+        if(inputFileContent[i] - keyValue < 0) {
+            inputFileContent[i] = 256 - (keyValue - inputFileContent[i]);
+        } else {
+            inputFileContent[i] -= keyValue;
         }
-        if(integerValue == 13) {
-            outputFileContent[i] = 13;
-            continue;
-        }
-        integerValue -= keyValue;
-        if(integerValue < 32) {
-            integerValue += keyValue;
-            integerValue = 126 - (keyValue - (integerValue - 32));
-        }
-        outputFileContent[i] = integerValue;
     }
 
-    writeToOutputFile(outputFileContent, outputFileName);
+    writeToOutputFile(inputFileContent, outputFileName, size);
+    free(inputFileContent);
 }
